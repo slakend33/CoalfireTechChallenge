@@ -17,7 +17,6 @@ resource "azurerm_key_vault" "main" {
   resource_group_name        = var.resource_group_name
   tenant_id                  = var.tenant_id
   sku_name                   = "standard"
-  enable_rbac_authorization  = true   # Use RBAC instead of access policies
   purge_protection_enabled   = true
   soft_delete_retention_days = 90
   tags                       = var.tags

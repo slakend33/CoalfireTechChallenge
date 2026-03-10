@@ -117,7 +117,7 @@ variable "lb_name" {
 variable "storage_account_name" {
   description = "Globally unique Storage Account name (3-24 chars, lowercase alphanumeric)."
   type        = string
-  default     = "stinfraprod001"
+  default     = "cfcprod001"
 }
 
 # ── Security ──────────────────────────────────────────────────────────────────
