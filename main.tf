@@ -1,385 +1,166 @@
 ##############################################################################
-# main.tf
-# Entry point for the Azure Web Server PoC environment.
-#
-# Contains:
-#   1. Resource group
-#   2. All Coalfire module calls (terraform-azurerm-nsg × 4)
-#
-# Supporting resources (VNet, VMs, storage, load balancer) are defined in
-# their dedicated .tf files and depend on the outputs of these modules.
+# ROOT MAIN.TF
+# Orchestrates all child modules for the Azure infrastructure deployment.
 ##############################################################################
 
-# ─── Resource Group ──────────────────────────────────────────────────────────
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.100"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 2.47"
+    }
+  }
+
+  # Uncomment to use the "terraformstate" blob container for remote state.
+  # backend "azurerm" {
+  #   resource_group_name  = "rg-tfstate"
+  #   storage_account_name = "<storage_account_name>"
+  #   container_name       = "terraformstate"
+  #   key                  = "prod.terraform.tfstate"
+  # }
+}
+
+provider "azurerm" {
+  features {}
+  subscription_id = var.subscription_id
+}
+
+provider "azuread" {}
+
+##############################################################################
+# Resource Group
+##############################################################################
 
 resource "azurerm_resource_group" "main" {
-  name     = "${local.name_prefix}-rg"
+  name     = var.resource_group_name
   location = var.location
-  tags     = local.common_tags
+  tags     = var.tags
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Coalfire NSG Module – Web Subnet
-# Source: github.com/Coalfire-CF/terraform-azurerm-nsg
-#
-# Purpose  : Allows inbound HTTP/HTTPS from the internet and load-balancer
-#            health probes; allows SSH only from the management subnet.
-# Denies   : All other inbound traffic.
-# ─────────────────────────────────────────────────────────────────────────────
+##############################################################################
+# Module: Network
+# Creates the VNet and four /24 subnets.
+##############################################################################
 
-module "nsg_web" {
-  source = "github.com/Coalfire-CF/terraform-azurerm-nsg?ref=main"
+module "network" {
+  source = "./modules/network"
 
-  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  security_group_name = "${local.name_prefix}-web-nsg"
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
 
-  # ── Flow log wiring (optional – activated by var.enable_nsg_flow_logs) ────
-  storage_account_flowlogs_id       = local.flowlog_storage_id
-  network_watcher_name              = var.enable_nsg_flow_logs ? local.network_watcher_name : null
-  network_watcher_flow_log_name     = var.enable_nsg_flow_logs ? "${local.name_prefix}-web-nsg-flowlog" : null
-  network_watcher_flow_log_location = var.enable_nsg_flow_logs ? var.location : null
-  diag_log_analytics_id             = local.flowlog_la_id
-  diag_log_analytics_workspace_id   = local.flowlog_la_workspace_id
+  vnet_name          = var.vnet_name
+  vnet_address_space = var.vnet_address_space
 
-  global_tags   = var.global_tags
-  regional_tags = var.regional_tags
-
-  custom_rules = [
-    # ── Rule 100: Azure Load Balancer health probes ────────────────────────
-    {
-      name                       = "Allow-LB-HealthProbe-Inbound"
-      priority                   = "100"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "65200-65535"
-      source_address_prefix      = "AzureLoadBalancer"
-      destination_address_prefix = "VirtualNetwork"
-      description                = "Allow Azure LB health probe traffic"
-    },
-    # ── Rule 110: Inbound HTTP ─────────────────────────────────────────────
-    {
-      name                       = "Allow-HTTP-Inbound"
-      priority                   = "110"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "80"
-      source_address_prefix      = "*"
-      destination_address_prefix = local.web_subnet_cidr
-      description                = "Allow inbound HTTP from any source"
-    },
-    # ── Rule 120: Inbound HTTPS ────────────────────────────────────────────
-    {
-      name                       = "Allow-HTTPS-Inbound"
-      priority                   = "120"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "443"
-      source_address_prefix      = "*"
-      destination_address_prefix = local.web_subnet_cidr
-      description                = "Allow inbound HTTPS from any source"
-    },
-    # ── Rule 200: SSH from management subnet → web VMs ────────────────────
-    # REQUIREMENT: "NSG allows SSH from management VM to Web VM"
-    {
-      name                       = "Allow-SSH-From-Management"
-      priority                   = "200"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = local.mgmt_subnet_cidr
-      destination_address_prefix = local.web_subnet_cidr
-      description                = "Allow SSH from management subnet to web VMs"
-    },
-    # ── Rule 900: Explicit deny-all inbound ───────────────────────────────
-    {
-      name                       = "Deny-All-Inbound"
-      priority                   = "900"
-      direction                  = "Inbound"
-      access                     = "Deny"
-      protocol                   = "*"
-      source_port_range          = "*"
-      destination_port_range     = "*"
-      source_address_prefix      = "*"
-      destination_address_prefix = "*"
-      description                = "Explicit deny-all – defence in depth"
-    },
-    # ── Rule 100: Outbound HTTP (package updates) ──────────────────────────
-    {
-      name                       = "Allow-HTTP-HTTPS-Outbound"
-      priority                   = "100"
-      direction                  = "Outbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "80"
-      source_address_prefix      = local.web_subnet_cidr
-      destination_address_prefix = "*"
-      description                = "Allow HTTP outbound for package updates"
-    },
-  ]
-
-  depends_on = [
-    azurerm_network_watcher.main,
-    azurerm_storage_account.flowlogs,
-    azurerm_log_analytics_workspace.nsg_diag,
-  ]
+  subnets = var.subnets
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Coalfire NSG Module – Management Subnet
-# Source: github.com/Coalfire-CF/terraform-azurerm-nsg
-#
-# Purpose  : Jump-host subnet. Allows SSH from the VNet ("this network") and
-#            optionally from an approved external CIDR.
-# REQUIREMENT: "NSG allows SSH from this network"
-# ─────────────────────────────────────────────────────────────────────────────
+##############################################################################
+# Module: NSG
+# Creates the Network Security Group and associates it with subnets.
+##############################################################################
 
-module "nsg_management" {
-  source = "github.com/Coalfire-CF/terraform-azurerm-nsg?ref=main"
+module "nsg" {
+  source = "./modules/nsg"
 
-  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  security_group_name = "${local.name_prefix}-mgmt-nsg"
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
 
-  storage_account_flowlogs_id       = local.flowlog_storage_id
-  network_watcher_name              = var.enable_nsg_flow_logs ? local.network_watcher_name : null
-  network_watcher_flow_log_name     = var.enable_nsg_flow_logs ? "${local.name_prefix}-mgmt-nsg-flowlog" : null
-  network_watcher_flow_log_location = var.enable_nsg_flow_logs ? var.location : null
-  diag_log_analytics_id             = local.flowlog_la_id
-  diag_log_analytics_workspace_id   = local.flowlog_la_workspace_id
+  management_vm_private_ip = module.compute.management_vm_private_ip
+  loadbalancer_frontend_ip = module.loadbalancer.frontend_private_ip
 
-  global_tags   = var.global_tags
-  regional_tags = var.regional_tags
+  web_subnet_id        = module.network.subnet_ids["web"]
+  management_subnet_id = module.network.subnet_ids["management"]
 
-  custom_rules = [
-    # ── Rule 100: SSH from "this network" (VNet CIDR = 10.0.0.0/16) ──────
-    # REQUIREMENT: "NSG allows SSH from this network"
-    {
-      name                       = "Allow-SSH-From-VNet"
-      priority                   = "100"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = local.vnet_cidr
-      destination_address_prefix = local.mgmt_subnet_cidr
-      description                = "Allow SSH from anywhere within the VNet (10.0.0.0/16)"
-    },
-    # ── Rule 110: SSH from approved external CIDR (e.g. corporate VPN) ────
-    {
-      name                       = "Allow-SSH-From-ApprovedExternal"
-      priority                   = "110"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = var.allowed_ssh_source_cidr
-      destination_address_prefix = local.mgmt_subnet_cidr
-      description                = "Allow SSH from approved external source CIDR"
-    },
-    # ── Rule 900: Explicit deny-all inbound ───────────────────────────────
-    {
-      name                       = "Deny-All-Inbound"
-      priority                   = "900"
-      direction                  = "Inbound"
-      access                     = "Deny"
-      protocol                   = "*"
-      source_port_range          = "*"
-      destination_port_range     = "*"
-      source_address_prefix      = "*"
-      destination_address_prefix = "*"
-      description                = "Explicit deny-all inbound"
-    },
-    # ── Rule 100: Outbound SSH to web subnet ──────────────────────────────
-    {
-      name                       = "Allow-SSH-To-Web"
-      priority                   = "100"
-      direction                  = "Outbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = local.mgmt_subnet_cidr
-      destination_address_prefix = local.web_subnet_cidr
-      description                = "Allow management VM to SSH to web VMs"
-    },
-    # ── Rule 110: Outbound HTTPS (Azure API, package updates) ─────────────
-    {
-      name                       = "Allow-Internet-Outbound"
-      priority                   = "110"
-      direction                  = "Outbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "443"
-      source_address_prefix      = local.mgmt_subnet_cidr
-      destination_address_prefix = "Internet"
-      description                = "Allow HTTPS outbound for package updates and Azure API"
-    },
-  ]
-
-  depends_on = [
-    azurerm_network_watcher.main,
-    azurerm_storage_account.flowlogs,
-    azurerm_log_analytics_workspace.nsg_diag,
-  ]
+  depends_on = [module.network, module.compute, module.loadbalancer]
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Coalfire NSG Module – Application Subnet
-# Source: github.com/Coalfire-CF/terraform-azurerm-nsg
-#
-# Purpose  : Middle-tier application servers. Accepts traffic from the web
-#            subnet on application ports; SSH from management only.
-# ─────────────────────────────────────────────────────────────────────────────
+##############################################################################
+# Module: Storage
+# Creates a GRS storage account with two blob containers.
+##############################################################################
 
-module "nsg_application" {
-  source = "github.com/Coalfire-CF/terraform-azurerm-nsg?ref=main"
+module "storage" {
+  source = "./modules/storage"
 
-  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  security_group_name = "${local.name_prefix}-app-nsg"
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
 
-  storage_account_flowlogs_id       = local.flowlog_storage_id
-  network_watcher_name              = var.enable_nsg_flow_logs ? local.network_watcher_name : null
-  network_watcher_flow_log_name     = var.enable_nsg_flow_logs ? "${local.name_prefix}-app-nsg-flowlog" : null
-  network_watcher_flow_log_location = var.enable_nsg_flow_logs ? var.location : null
-  diag_log_analytics_id             = local.flowlog_la_id
-  diag_log_analytics_workspace_id   = local.flowlog_la_workspace_id
-
-  global_tags   = var.global_tags
-  regional_tags = var.regional_tags
-
-  custom_rules = [
-    # ── Rule 100: Allow app-port traffic from web tier ────────────────────
-    {
-      name                       = "Allow-WebTier-Inbound"
-      priority                   = "100"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "8080"
-      source_address_prefix      = local.web_subnet_cidr
-      destination_address_prefix = local.app_subnet_cidr
-      description                = "Allow traffic from web tier to application tier"
-    },
-    # ── Rule 110: SSH from management subnet ──────────────────────────────
-    {
-      name                       = "Allow-SSH-From-Management"
-      priority                   = "110"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = local.mgmt_subnet_cidr
-      destination_address_prefix = local.app_subnet_cidr
-      description                = "Allow SSH from management subnet for admin access"
-    },
-    # ── Rule 900: Explicit deny-all inbound ───────────────────────────────
-    {
-      name                       = "Deny-All-Inbound"
-      priority                   = "900"
-      direction                  = "Inbound"
-      access                     = "Deny"
-      protocol                   = "*"
-      source_port_range          = "*"
-      destination_port_range     = "*"
-      source_address_prefix      = "*"
-      destination_address_prefix = "*"
-      description                = "Explicit deny-all inbound"
-    },
-  ]
-
-  depends_on = [
-    azurerm_network_watcher.main,
-    azurerm_storage_account.flowlogs,
-    azurerm_log_analytics_workspace.nsg_diag,
-  ]
+  storage_account_name = var.storage_account_name
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Coalfire NSG Module – Backend Subnet
-# Source: github.com/Coalfire-CF/terraform-azurerm-nsg
-#
-# Purpose  : Data tier (databases, caches). Accepts DB traffic from the
-#            application subnet only; tightly locked down.
-# ─────────────────────────────────────────────────────────────────────────────
+##############################################################################
+# Module: Load Balancer
+# Internal load balancer targeting the Web subnet VMs.
+##############################################################################
 
-module "nsg_backend" {
-  source = "github.com/Coalfire-CF/terraform-azurerm-nsg?ref=main"
+module "loadbalancer" {
+  source = "./modules/loadbalancer"
 
-  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  security_group_name = "${local.name_prefix}-be-nsg"
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
 
-  storage_account_flowlogs_id       = local.flowlog_storage_id
-  network_watcher_name              = var.enable_nsg_flow_logs ? local.network_watcher_name : null
-  network_watcher_flow_log_name     = var.enable_nsg_flow_logs ? "${local.name_prefix}-be-nsg-flowlog" : null
-  network_watcher_flow_log_location = var.enable_nsg_flow_logs ? var.location : null
-  diag_log_analytics_id             = local.flowlog_la_id
-  diag_log_analytics_workspace_id   = local.flowlog_la_workspace_id
+  lb_name           = var.lb_name
+  web_subnet_id     = module.network.subnet_ids["web"]
+  web_vm_nic_ids    = module.compute.web_vm_nic_ids
+  web_vm_private_ips = module.compute.web_vm_private_ips
 
-  global_tags   = var.global_tags
-  regional_tags = var.regional_tags
+  depends_on = [module.network, module.compute]
+}
 
-  custom_rules = [
-    # ── Rule 100: SQL traffic from application tier ────────────────────────
-    {
-      name                       = "Allow-AppTier-DB-Inbound"
-      priority                   = "100"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "1433"   # SQL Server; adjust for your DB engine
-      source_address_prefix      = local.app_subnet_cidr
-      destination_address_prefix = local.be_subnet_cidr
-      description                = "Allow SQL traffic from application tier"
-    },
-    # ── Rule 110: SSH from management subnet ──────────────────────────────
-    {
-      name                       = "Allow-SSH-From-Management"
-      priority                   = "110"
-      direction                  = "Inbound"
-      access                     = "Allow"
-      protocol                   = "Tcp"
-      source_port_range          = "*"
-      destination_port_range     = "22"
-      source_address_prefix      = local.mgmt_subnet_cidr
-      destination_address_prefix = local.be_subnet_cidr
-      description                = "Allow SSH from management subnet"
-    },
-    # ── Rule 900: Explicit deny-all inbound ───────────────────────────────
-    {
-      name                       = "Deny-All-Inbound"
-      priority                   = "900"
-      direction                  = "Inbound"
-      access                     = "Deny"
-      protocol                   = "*"
-      source_port_range          = "*"
-      destination_port_range     = "*"
-      source_address_prefix      = "*"
-      destination_address_prefix = "*"
-      description                = "Explicit deny-all inbound"
-    },
-  ]
+##############################################################################
+# Module: Compute
+# Availability Set + 2 Web VMs + 1 Management VM.
+##############################################################################
 
-  depends_on = [
-    azurerm_network_watcher.main,
-    azurerm_storage_account.flowlogs,
-    azurerm_log_analytics_workspace.nsg_diag,
-  ]
+module "compute" {
+  source = "./modules/compute"
+
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
+
+  web_subnet_id        = module.network.subnet_ids["web"]
+  management_subnet_id = module.network.subnet_ids["management"]
+
+  web_vm_count       = var.web_vm_count
+  web_vm_name_prefix = var.web_vm_name_prefix
+  mgmt_vm_name       = var.mgmt_vm_name
+  vm_size            = var.vm_size
+  admin_username     = var.admin_username
+  ssh_public_key     = var.ssh_public_key
+
+  availability_set_name = var.availability_set_name
+
+  depends_on = [module.network]
+}
+
+##############################################################################
+# Module: Security
+# Azure AD principals, role assignments, and Key Vault (optional secrets).
+##############################################################################
+
+module "security" {
+  source = "./modules/security"
+
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = var.tags
+
+  subscription_id      = var.subscription_id
+  storage_account_id   = module.storage.storage_account_id
+  key_vault_name       = var.key_vault_name
+  tenant_id            = var.tenant_id
+  user_principals      = var.user_principals
+
+  depends_on = [module.storage]
 }
