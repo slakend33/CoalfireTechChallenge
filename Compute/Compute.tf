@@ -5,11 +5,6 @@
 #   • Availability Set for the two web VMs
 #   • 2 × Linux web VMs in the web subnet, joined to the availability set
 #   • 1 × Linux management VM in the management subnet
-#
-# NOTE: Coalfire does not currently publish a public terraform-azurerm-vm-linux
-# module, so native azurerm_linux_virtual_machine resources are used.
-# The Windows equivalent is available at:
-#   github.com/Coalfire-CF/terraform-azurerm-vm-windows
 ##############################################################################
 
 # ─── SSH Key Pair ─────────────────────────────────────────────────────────────
