@@ -1,5 +1,5 @@
 ##############################################################################
-# MODULE: COMPUTE – OUTPUTS
+# MODULE: COMPUTE - OUTPUTS
 ##############################################################################
 
 output "web_vm_ids" {
@@ -13,7 +13,7 @@ output "web_vm_private_ips" {
 }
 
 output "web_vm_nic_ids" {
-  description = "NIC resource IDs for the Web VMs (used by the Load Balancer module)."
+  description = "NIC resource IDs for the Web VMs (consumed by the Load Balancer module)."
   value       = azurerm_network_interface.web[*].id
 }
 
@@ -32,12 +32,17 @@ output "management_vm_private_ip" {
   value       = azurerm_network_interface.management.private_ip_address
 }
 
+output "management_vm_public_ip" {
+  description = "Public IP address of the Management VM."
+  value       = azurerm_public_ip.management.ip_address
+}
+
 output "management_vm_principal_id" {
   description = "System-assigned managed identity principal ID of the Management VM."
   value       = azurerm_linux_virtual_machine.management.identity[0].principal_id
 }
 
 output "availability_set_id" {
-  description = "Resource ID of the Availability Set."
+  description = "Resource ID of the Web VM Availability Set."
   value       = azurerm_availability_set.web.id
 }

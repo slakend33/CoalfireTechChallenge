@@ -1,5 +1,5 @@
 ##############################################################################
-# MODULE: STORAGE – VARIABLES
+# MODULE: STORAGE - VARIABLES
 ##############################################################################
 
 variable "resource_group_name" {
@@ -23,4 +23,14 @@ variable "storage_account_name" {
     condition     = can(regex("^[a-z0-9]{3,24}$", var.storage_account_name))
     error_message = "Storage account name must be 3-24 lowercase alphanumeric characters."
   }
+}
+
+variable "management_subnet_id" {
+  description = <<-EOT
+    Resource ID of the Management subnet. The storage account firewall will be set to
+    Deny all traffic by default and allow access only from this subnet via a VNet
+    service endpoint rule. The Microsoft.Storage service endpoint must be enabled on
+    the subnet (handled by the network module).
+  EOT
+  type = string
 }

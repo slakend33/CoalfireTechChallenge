@@ -29,16 +29,16 @@ resource "azurerm_storage_account" "main" {
   tags = var.tags
 }
 
-# ── Blob Containers ───────────────────────────────────────────────────────────
+# -- Blob Containers -----------------------------------------------------------
 
 resource "azurerm_storage_container" "terraformstate" {
   name                  = "terraformstate"
-  storage_account_name  = azurerm_storage_account.main.name
+  storage_account_name    = azurerm_storage_account.main.name
   container_access_type = "private"
 }
 
 resource "azurerm_storage_container" "weblogs" {
   name                  = "weblogs"
-  storage_account_name  = azurerm_storage_account.main.name
+  storage_account_name    = azurerm_storage_account.main.name
   container_access_type = "private"
 }

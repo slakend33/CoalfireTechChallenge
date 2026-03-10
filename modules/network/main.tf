@@ -18,4 +18,5 @@ resource "azurerm_subnet" "subnets" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [each.value]
+  service_endpoints = lookup(var.service_endpoint_subnets, each.key, [])
 }

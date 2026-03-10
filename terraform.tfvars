@@ -1,5 +1,5 @@
 ##############################################################################
-# TERRAFORM.TFVARS  –  Replace all placeholder values before applying.
+# TERRAFORM.TFVARS - Replace all placeholder values before applying.
 ##############################################################################
 
 subscription_id     = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -30,28 +30,31 @@ mgmt_vm_name          = "vm-mgmt-01"
 availability_set_name = "avset-web"
 vm_size               = "Standard_B2s"
 admin_username        = "azureuser"
-ssh_public_key        = "ssh-rsa AAAA...your-public-key-here..."
+
+# OS Image - Ubuntu Server 22.04 LTS Gen2
+# Change all four values together to switch to a different image.
+vm_image_publisher = "Canonical"
+vm_image_offer     = "0001-com-ubuntu-server-jammy"
+vm_image_sku       = "22_04-lts-gen2"
+vm_image_version   = "latest"
+
+# NOTE: SSH keys are generated automatically by Terraform (tls_private_key).
+# No ssh_public_key entry is required. After apply, retrieve private keys from:
+#   Key Vault secret: ssh-private-key-web
+#   Key Vault secret: ssh-private-key-mgmt
 
 # Load Balancer
-lb_name = "lb-web-internal"
+lb_name                = "lb-web-internal"
+# Static frontend IP - must be within the web subnet (10.0.4.0/24).
+# Azure reserves .1-.4 in every subnet; avoid those and any VM NIC addresses.
+lb_frontend_private_ip = "10.0.4.10"
 
-# Storage  (must be globally unique, 3-24 lowercase alphanumeric)
-storage_account_name = "stinfraprod001"
+# Storage (must be globally unique across all of Azure, 3-24 lowercase alphanumeric)
+# If deployment fails with StorageAccountAlreadyTaken, change this to something unique.
+storage_account_name = "cfcinfraprod001"
 
 # Security
-key_vault_name = "kv-infra-prod-001"
+key_vault_name = "cfc-prod-001"
+sp_name        = "sp-infra-prod"
+kv_ip_rules = ["xxx.xxx.xxx.xxx"]
 
-user_principals = {
-  "infra-admin" = {
-    object_id = "00000000-0000-0000-0000-000000000001"
-    roles     = ["Contributor"]
-  }
-  "storage-reader" = {
-    object_id = "00000000-0000-0000-0000-000000000002"
-    roles     = ["Storage Blob Data Reader"]
-  }
-  "keyvault-officer" = {
-    object_id = "00000000-0000-0000-0000-000000000003"
-    roles     = ["Key Vault Secrets Officer"]
-  }
-}
