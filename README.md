@@ -117,7 +117,7 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-Full step-by-step instructions are in [`Terraform_VS_Code_Deployment_Guide.docx`](./Terraform_VS_Code_Deployment_Guide.docx).
+Full step-by-step instructions are in [`Terraform_VS_Code_Deployment_Guide.docx`].
 
 ---
 
