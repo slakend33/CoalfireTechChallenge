@@ -1,5 +1,4 @@
 # Tech Challenge — Terraform
-# Tech Challenge — Terraform
 
 Production-grade Azure infrastructure deployed via Terraform. Provisions a multi-tier environment with virtual networking, compute VMs, an internal load balancer, Key Vault, and Storage — all wired together through a strict module dependency chain with no hard-coded values.
 
